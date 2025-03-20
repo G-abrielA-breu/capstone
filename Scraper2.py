@@ -77,11 +77,28 @@ def get_8Ks(cik_dict):
             # Find the table containing filing details
             table = soup.find('table', class_='tableFile2')
             
-            # If no table is found, we have reached the end of the pages
-            if not table:
-                print("No more filings found.")
+            if not table and first != 0:
+                print("No 8-K filings found.")
                 break
+            else:
+                first = 1
+                url = f'{base_url}?action=getcompany&CIK={cik_code}&type=6-K&dateb=&owner=exclude&count={count}&start={(page_num - 1) * count}'
+                response = requests.get(url, headers=header)
+                #response.raise_for_status()  # Check if the request was successful
+                if response.status_code == 429:
+                    print("Rate limit reached. Waiting for 100 seconds...")
+                    time.sleep(100)
+                    response = requests.get(url, headers=header)   
+                # Parse the HTML content of the page
+                soup = BeautifulSoup(response.content, 'html.parser')
+                # Find the table containing filing details
+                table = soup.find('table', class_='tableFile2')
+                # If no table is found, we have reached the end of the pages
             
+            if not table and first == 1:
+                print("No 6-K filings found.")
+                first = 0
+                break
             # Loop through each row in the table, skipping the header row
             for row in table.find_all('tr')[1:]:
                 # Get all the columns in the row
@@ -139,7 +156,7 @@ def get_8Ks(cik_dict):
                 json.dump(relevant_filings, file)
             print(f"Found {len(relevant_filings)} relevant 8-K filings containing '1.05 material'. Saved to 'att_8k_filings_1_05_material_all.csv'.")
         else:
-            print("No 8-K filings containing '1.05 material' found for AT&T.")
+            print(f"No 8-K filings containing '1.05 material' found for {c}.")
     print(f'Finished {c}')
     return 
 
