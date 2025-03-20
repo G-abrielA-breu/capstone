@@ -1,0 +1,42 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+
+# Define the SEC EDGAR search URL for AT&T's 8-K filings
+url = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000732717&type=8-K&dateb=&owner=exclude&count=100'
+
+# Send a request to the SEC EDGAR page
+response = requests.get(url)
+response.raise_for_status()  # Check if the request was successful
+
+# Parse the HTML content of the page
+soup = BeautifulSoup(response.content, 'html.parser')
+
+# Initialize a list to store the filing URLs
+filing_links = []
+
+# Find all the filing details tables on the page
+table = soup.find('table', class_='tableFile2')
+
+# Loop through each row in the table, skipping the header row
+for row in table.find_all('tr')[1:]:
+    # Get all the columns in the row
+    cols = row.find_all('td')
+    if len(cols) > 3:  # Ensure the row has enough columns
+        # The second column contains the link to the filing
+        link = cols[1].find('a')
+        if link:
+            filing_url = 'https://www.sec.gov' + link.get('href')
+            filing_links.append(filing_url)
+
+# If no links are found, notify the user
+if not filing_links:
+    print("No 8-K filings found for AT&T.")
+else:
+    # Create a DataFrame to store the links
+    df = pd.DataFrame(filing_links, columns=['Filing URL'])
+    
+    # Save the data to a CSV file
+    df.to_csv('att_8k_filings.csv', index=False)
+    
+    print(f"Found {len(filing_links)} 8-K filings. Saved to 'att_8k_filings.csv'.")
