@@ -1,79 +1,168 @@
 import requests
+import re
 from bs4 import BeautifulSoup
-import pandas as pd
+import json
 import time
 
-# Define the SEC EDGAR base URL for AT&T's 8-K filings
-base_url = 'https://www.sec.gov/cgi-bin/browse-edgar'
+# Constants
+EMAIL = 'gabriel.abreu@bluevoyant.com'
+HEADER = {'User-Agent': EMAIL}
+BASE_URL = 'https://www.sec.gov/cgi-bin/browse-edgar'
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # in seconds
 
-# Initialize a list to store the relevant filings
-relevant_filings = []
 
-# Set the CIK code for AT&T
-cik_code = '0000732717'
+# Fetch CIK codes from the SEC website
+def download_cik_data():
+    url = 'https://www.sec.gov/files/company_tickers.json'
+    response = requests.get(url, headers=HEADER)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Failed to download CIK data. Status code: {response.status_code}")
 
-# Define the number of filings per page (100 is the maximum)
-count = 100
 
-# Start with the first page of filings
-page_num = 1
-
-while True:
-    # Construct the URL for the current page of filings
-    url = f'{base_url}?action=getcompany&CIK={cik_code}&type=8-K&dateb=&owner=exclude&count={count}&start={(page_num - 1) * count}'
+# Match domain names to CIK codes
+def match_domain_to_cik(domain_list, cik_data):
+    domain_to_cik = {}
+    total_domains = len(domain_list)
     
-    # Send a request to the SEC EDGAR page
-    response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
-    
-    # Parse the HTML content of the page
-    soup = BeautifulSoup(response.content, 'html.parser')
-    
-    # Find the table containing filing details
-    table = soup.find('table', class_='tableFile2')
-    
-    # If no table is found, we have reached the end of the pages
-    if not table:
-        print("No more filings found.")
-        break
-    
-    # Loop through each row in the table, skipping the header row
-    for row in table.find_all('tr')[1:]:
-        # Get all the columns in the row
-        cols = row.find_all('td')
-        if len(cols) > 3:  # Ensure the row has enough columns
-            # The second column contains the link to the filing
-            link = cols[1].find('a')
-            if link:
-                filing_url = 'https://www.sec.gov' + link.get('href')
-                
-                # Check the filing details for the phrase "1.05 material"
-                filing_response = requests.get(filing_url)
-                filing_response.raise_for_status()  # Ensure successful request
+    for idx, domain in enumerate(domain_list):
+        domain_name = domain.split('.')[0]
+        pattern = re.compile(rf"{domain_name}", re.IGNORECASE)
+        for item in cik_data.values():
+            if pattern.search(item['title']):
+                domain_to_cik[domain] = item['cik_str']
+                break
+        if (idx + 1) % 100 == 0 or (idx + 1) == total_domains:
+            print(f'{idx + 1} of {total_domains} domains processed.')
+    return domain_to_cik
 
-                # Parse the content of the filing
-                filing_soup = BeautifulSoup(filing_response.content, 'html.parser')
-                text_content = filing_soup.get_text()
 
-                # Search for the phrase "1.05 material" in the filing
-                if '1.05 material' in text_content.lower():
-                    relevant_filings.append(filing_url)
-    
-    # Check if we've found fewer than 100 filings, indicating we're on the last page
-    if len(table.find_all('tr')[1:]) < count:
-        break
-    
-    # Move to the next page
-    page_num += 1
-    
-    # Sleep for a bit to avoid overwhelming the server (rate limiting)
-    time.sleep(1)
+# Retry mechanism for requests
+def make_request(url):
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.get(url, headers=HEADER)
+            response.raise_for_status()  # Ensure request was successful
+            return response
+        except requests.RequestException as e:
+            print(f"Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY)
+            else:
+                raise
 
-# If relevant filings are found, save them to a CSV file
-if relevant_filings:
-    df = pd.DataFrame(relevant_filings, columns=['Filing URL'])
-    df.to_csv('att_8k_filings_1_05_material_all.csv', index=False)
-    print(f"Found {len(relevant_filings)} relevant 8-K filings containing '1.05 material'. Saved to 'att_8k_filings_1_05_material_all.csv'.")
-else:
-    print("No 8-K filings containing '1.05 material' found for AT&T.")
 
+# Extract the relevant filings (8-K) for CIK codes
+def get_8Ks(cik_dict):
+    for c, cik_code in cik_dict.items():
+        if not cik_code:
+            continue
+        print(f"Exploring CIK {cik_code}...")
+        
+        relevant_filings = {}
+        first = 0
+        page_num = 1
+
+        while True:
+            url = f'{BASE_URL}?action=getcompany&CIK={cik_code}&type=8-K&count=100&start={(page_num - 1) * 100}'
+            response = make_request(url)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            table = soup.find('table', class_='tableFile2')
+
+            if not table:
+                if first == 0:
+                    print("No 8-K filings found, switching to 6-K filings.")
+                    first = 1
+                    url = f'{BASE_URL}?action=getcompany&CIK={cik_code}&type=6-K&count=100&start={(page_num - 1) * 100}'
+                    response = make_request(url)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    table = soup.find('table', class_='tableFile2')
+                else:
+                    print("No filings found.")
+                    break
+
+            # Extract links to filings from the table
+            for row in table.find_all('tr')[1:]:
+                cols = row.find_all('td')
+                if len(cols) > 3:
+                    link = cols[1].find('a')
+                    if link:
+                        filing_url = 'https://www.sec.gov' + link.get('href')
+                        filing_response = make_request(filing_url)
+                        filing_soup = BeautifulSoup(filing_response.content, 'html.parser')
+                        text_content = filing_soup.get_text()
+
+                        # Extract URLs that end in .htm
+                        urP = re.findall(r'\b.*\.htm\b', text_content)
+                        pth = filing_url.rfind("/")
+
+                        for ur in urP:
+                            try:
+                                fin_url = filing_url[:pth + 1] + ur
+                                fin_response = make_request(fin_url)
+                                fin_soup = BeautifulSoup(fin_response.content, 'html.parser')
+                                text_content = fin_soup.get_text()
+
+                                if '1.05 material' in text_content.lower():
+                                    relevant_filings[cik_code] = (text_content, fin_url)
+                            except Exception as e:
+                                print(f"Error processing {fin_url}: {e}")
+                                continue
+
+            # Check if we've reached the last page of filings
+            if len(table.find_all('tr')[1:]) < 100:
+                break
+
+            page_num += 1
+            print(f"Moving to page {page_num}...")
+
+        if relevant_filings:
+            with open('scrape_data.txt', 'a') as file:
+                json.dump(relevant_filings, file)
+            print(f"Found {len(relevant_filings)} relevant 8-K filings for CIK {cik_code}.")
+        else:
+            print(f"No relevant filings found for CIK {cik_code}.")
+
+
+# Main function for scraping
+def scrape():
+    query = """
+    SELECT entity_domain, entity_name FROM `usna_capstone.Hit_Table_1`
+    """
+    try:
+        cik_data = download_cik_data()
+        print("Downloaded CIK data")
+        domain_list = BQ.run_query(query)
+        print("Downloaded domains")
+        matched_data = match_domain_to_cik(domain_list, cik_data)
+        print("Domains matched to CIKs")
+        return matched_data
+    except Exception as e:
+        print(f"Error during scraping: {e}")
+
+
+# Upload scrape results
+def upload_scrape(cleaned_data):
+    print("Uploading Scrape results...")
+    with open('domCik.txt', 'w') as file:
+        json.dump(cleaned_data, file)
+
+    try:
+        get_8Ks(cleaned_data)
+    except Exception as e:
+        print(f"Error in get_8Ks: {e}")
+
+    with open('scrape_data.txt', 'w') as file:
+        json.dump(cleaned_data, file)
+
+
+# Main driver function
+if __name__ == "__main__":
+    # Step 1: Download and match CIK data
+    matched_cik_data = scrape()
+
+    # Step 2: Upload scraped data and process 8-K filings
+    if matched_cik_data:
+        upload_scrape(matched_cik_data)
