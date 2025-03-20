@@ -1,42 +1,79 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import time
 
-# Define the SEC EDGAR search URL for AT&T's 8-K filings
-url = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000732717&type=8-K&dateb=&owner=exclude&count=100'
+# Define the SEC EDGAR base URL for AT&T's 8-K filings
+base_url = 'https://www.sec.gov/cgi-bin/browse-edgar'
 
-# Send a request to the SEC EDGAR page
-response = requests.get(url)
-response.raise_for_status()  # Check if the request was successful
+# Initialize a list to store the relevant filings
+relevant_filings = []
 
-# Parse the HTML content of the page
-soup = BeautifulSoup(response.content, 'html.parser')
+# Set the CIK code for AT&T
+cik_code = '0000732717'
 
-# Initialize a list to store the filing URLs
-filing_links = []
+# Define the number of filings per page (100 is the maximum)
+count = 100
 
-# Find all the filing details tables on the page
-table = soup.find('table', class_='tableFile2')
+# Start with the first page of filings
+page_num = 1
 
-# Loop through each row in the table, skipping the header row
-for row in table.find_all('tr')[1:]:
-    # Get all the columns in the row
-    cols = row.find_all('td')
-    if len(cols) > 3:  # Ensure the row has enough columns
-        # The second column contains the link to the filing
-        link = cols[1].find('a')
-        if link:
-            filing_url = 'https://www.sec.gov' + link.get('href')
-            filing_links.append(filing_url)
+while True:
+    # Construct the URL for the current page of filings
+    url = f'{base_url}?action=getcompany&CIK={cik_code}&type=8-K&dateb=&owner=exclude&count={count}&start={(page_num - 1) * count}'
+    
+    # Send a request to the SEC EDGAR page
+    response = requests.get(url)
+    response.raise_for_status()  # Check if the request was successful
+    
+    # Parse the HTML content of the page
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # Find the table containing filing details
+    table = soup.find('table', class_='tableFile2')
+    
+    # If no table is found, we have reached the end of the pages
+    if not table:
+        print("No more filings found.")
+        break
+    
+    # Loop through each row in the table, skipping the header row
+    for row in table.find_all('tr')[1:]:
+        # Get all the columns in the row
+        cols = row.find_all('td')
+        if len(cols) > 3:  # Ensure the row has enough columns
+            # The second column contains the link to the filing
+            link = cols[1].find('a')
+            if link:
+                filing_url = 'https://www.sec.gov' + link.get('href')
+                
+                # Check the filing details for the phrase "1.05 material"
+                filing_response = requests.get(filing_url)
+                filing_response.raise_for_status()  # Ensure successful request
 
-# If no links are found, notify the user
-if not filing_links:
-    print("No 8-K filings found for AT&T.")
+                # Parse the content of the filing
+                filing_soup = BeautifulSoup(filing_response.content, 'html.parser')
+                text_content = filing_soup.get_text()
+
+                # Search for the phrase "1.05 material" in the filing
+                if '1.05 material' in text_content.lower():
+                    relevant_filings.append(filing_url)
+    
+    # Check if we've found fewer than 100 filings, indicating we're on the last page
+    if len(table.find_all('tr')[1:]) < count:
+        break
+    
+    # Move to the next page
+    page_num += 1
+    
+    # Sleep for a bit to avoid overwhelming the server (rate limiting)
+    time.sleep(1)
+
+# If relevant filings are found, save them to a CSV file
+if relevant_filings:
+    df = pd.DataFrame(relevant_filings, columns=['Filing URL'])
+    df.to_csv('att_8k_filings_1_05_material_all.csv', index=False)
+    print(f"Found {len(relevant_filings)} relevant 8-K filings containing '1.05 material'. Saved to 'att_8k_filings_1_05_material_all.csv'.")
 else:
-    # Create a DataFrame to store the links
-    df = pd.DataFrame(filing_links, columns=['Filing URL'])
-    
-    # Save the data to a CSV file
-    df.to_csv('att_8k_filings.csv', index=False)
-    
-    print(f"Found {len(filing_links)} 8-K filings. Saved to 'att_8k_filings.csv'.")
+    print("No 8-K filings containing '1.05 material' found for AT&T.")
+
