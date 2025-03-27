@@ -47,10 +47,11 @@ def get_8Ks(cik_dict):
     base_url = 'https://www.sec.gov/cgi-bin/browse-edgar'
     email= 'gabriel.abreu@bluevoyant.com'
     header = {'User-Agent': f'{email}'}
-    # Define the SEC EDGAR base URL for AT&T's 8-K filings
+    # Define the SEC EDGAR base URL for cik's 8-K filings
     i=1
-    l=[]
+    
     for c in cik_dict:
+        l=[]
         first = 0
         if c == '':
             continue
@@ -58,39 +59,26 @@ def get_8Ks(cik_dict):
         i+=1
         # Initialize a list to store the relevant filings
         relevant_filings = {}
-
         # Set the CIK code for AT&T
         cik_code = cik_dict[c]
-
         # Define the number of filings per page (100 is the maximum)
         count = 100
-
         # Start with the first page of filings
         page_num = 1
-
         while True:
             # Construct the URL for the current page of filings
             url = f'{base_url}?action=getcompany&CIK={cik_code}&type=8-K&dateb=&owner=exclude&count={count}&start={(page_num - 1) * count}'
-            #print(url)
-            #h1 = input('Continue?')
             # Send a request to the SEC EDGAR page
             response = requests.get(url, headers=header)
             response.raise_for_status()  # Check if the request was successful
-            
             # Parse the HTML content of the page
             soup = BeautifulSoup(response.content, 'html.parser')
-            
             # Find the table containing filing details
             table = soup.find('table', class_='tableFile2')
-            #print(not(table))
-            
             if table == '':
                 print("No 8-K filings found.")
                 first = 1
-                #print('not 8k?')
                 url = f'{base_url}?action=getcompany&CIK={cik_code}&type=6-K&dateb=&owner=exclude&count={count}&start={(page_num - 1) * count}'
-                #print(url)
-                #h15 = input('Continue')
                 response = requests.get(url, headers=header)
                 #response.raise_for_status()  # Check if the request was successful
                 if response.status_code == 429:
@@ -116,111 +104,63 @@ def get_8Ks(cik_dict):
                     link = cols[1].find('a')
                     if link:
                         filing_url = 'https://www.sec.gov' + link.get('href')
-                        #print(filing_url)
-                        #h2= input('Continue?')
-                        #print(filing_url)
-                        # Check the filing details for the phrase "1.05 material"
+                       
                         filing_response = requests.get(filing_url, headers=header)
                         filing_response.raise_for_status()  # Ensure successful request
-
                         # Parse the content of the filing
                         filing_soup = BeautifulSoup(filing_response.content, 'html.parser')
                         text_content = filing_soup.get_text()
-                        #print(text_content)
                         urP = re.findall(r'\b.*\.htm\b', text_content)
                         pth = filing_url.rfind("/")
-                        #print(pth)
-                        #print(filing_url[:pth+1])
-                        #print(urP)
                         for ur in urP:
                             try:
                                 fin_url = filing_url[:pth+1] + urP[0]
-                                #print(fin_url)
-                                #h3 = input('Continue?') 
                                 fin_response = requests.get(fin_url, headers=header)
                                 fin_response.raise_for_status()  # Ensure successful request
                                 fin_soup = BeautifulSoup(fin_response.content, 'html.parser')
                                 text_content = fin_soup.get_text()
-                                #print(text_content)
-                                #print(fin_url)
-                                #time.sleep(1000)
-
-                                # Search for the phrase "1.05 material" in the filing
+                                # Search for the phrase "cybersecurity" in the filing
                                 if 'cybersecurity' in text_content.lower():
-                                    #print('here')
                                     text_sentences = get_next_10_sentences(text_content.lower(), 'cybersecurity')
-
-
-                                    #print(text_sentences)
-                                    #print(fin_url)
-                                    #print(text_sentences)
-                                    #print(text_sentences)
                                     combined_string = ' '.join(item.replace('\n', ' ') for item in text_sentences)
                                     print(combined_string)
-                                    #ipnut = input('Continue?')
-                                    #arr_text = ','.join(text_sentences)
-                                    #arr_text_clean = item.replace('\n', ' ') for item in arr_text
-                                    #print(arr_text)
-                                    #time.sleep(1000)    
-                                #    relevant_filings[cik_code]=(text_content,fin_url)
-                                    #relevant_filings[cik_code]=text_sentences
+                                    pattern = r'\b\S*\\\S*\b'
+                                    result = re.sub(pattern, '', combined_string)
+                                    combined_string = re.sub(r'\s+', ' ', result).strip()                           
                                     l.append(combined_string)
-                                    #append_to_json_file('nameText.json', cik_code, combined_string)
-                                   # with open('nameText.txt', 'r') as file:
-                                    #    fn = json.load(file)
-                                     #   fn.update(relevant_filings)
-                                    #    print(fn)
-                                    #with open('nameText.txt', 'w') as file:  
-                                     #   json.dump(fn, file)  
                                 else:
                                    continue
-                                
-                                
                             except: 
                                 print('Error', fin_url)
                                 continue
-            
             # Check if we've found fewer than 100 filings, indicating we're on the last page
             if len(table.find_all('tr')[1:]) < count:
                 break
-            
             # Move to the next page
             page_num += 1
             print(page_num)
-            # Sleep for a bit to avoid overwhelming the server (rate limiting)
-        # time.sleep(1)
-
-        # If relevant filings are found, save them to a CSV file
-        #if relevant_filings:
-         #   with open('scrape_data_ALL.txt', 'a') as file:
-        #        json.dump(relevant_filings, file)
-        #    print("sleep")
-        #    time.sleep(1000)
-            #print(f"Found {len(relevant_filings)} relevant 8-K filings containing '1.05 material'. Saved to 'att_8k_filings_1_05_material_all.csv'.")
-        #else:
-            #print(f"No 8-K filings containing '1.05 material' found for {c}.")
-        print(l)
-        input('Continue?')
+        #print(l)
+        joined_string = " ".join(l)
+        print(joined_string)
+        #input('Continue?')
+        if joined_string != '':
+            append_to_json_file('nameText.json', cik_code, joined_string)
     print(f'Finished {c}')
     return 
 
 def get_next_10_sentences(text, phrase):
     # Define a regular expression pattern for splitting text into sentences
     sentence_endings = re.compile(r'(?<=[.!?]) +')
-    
     # Split the text into sentences
-    sentences = sentence_endings.split(text)
-    
+    sentences = sentence_endings.split(text)  
     # Initialize an empty list to store the results
-    result_sentences = []
-    
+    result_sentences = []   
     # Loop through sentences to find the phrase
     for i, sentence in enumerate(sentences):
         if phrase in sentence:
             # If the phrase is found, get the next 10 sentences
             result_sentences = sentences[i+1:i+16]
             break
-    
     return result_sentences
 
 def append_to_json_file(file_path, new_key, new_value):
@@ -262,11 +202,8 @@ def append_to_json_file(file_path, new_key, new_value):
 
 
 def scrape():
-    query = """
-    SELECT entity_domain, entity_name FROM `usna_capstone.Hit_Table_1`
-    """
+    query = """ SELECT entity_domain, entity_name FROM `usna_capstone.Hit_Table_1` """
     try:
-
         cik_data = download_cik_data()
         print("Status: downloaded CIKs")
         domain_list = BQ.run_query(query)
@@ -279,9 +216,6 @@ def scrape():
 
 def upload_scrape(cleaned_data):
     print("Status: Uploading Scrape")
-
-    #print(cleaned_data)
-    #time.sleep(1000)
     try:
         hit_table = get_8Ks(cleaned_data)
     except Exception as e:
@@ -297,14 +231,8 @@ if __name__ == "__main__":
      #  json.dump(matched_cik_data, file)
 
     # STEP 2
-
-
     with open('first100.json', 'r') as file:
         loaded_dict = json.load(file)
-    
-    #time.sleep(1000)
-    #0-9
-    loaded_dict = dict(list(loaded_dict.items())[0:10])
-    #    #print(loaded_dict)
+    loaded_dict = dict(list(loaded_dict.items())[90:100])
     upload_scrape(loaded_dict)
 
